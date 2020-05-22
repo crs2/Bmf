@@ -15,11 +15,20 @@ class Bmf {
     /** @var int access as memory/string */
     const ACCESS_MEMORY = 1;
 
-    /** @var int used in imageText(), output as transparent PNG */
+    /** @var int used in textAsImage(), output as transparent PNG */
     const OUTPUT_PNG = 1;
 
-    /** @var int used in imageText(), return image resource */
-    const OUTPUT_RESOURCE = 2;
+    /** @var int used in textAsImage(), output as transparent HTML <img src="data:..."> */
+    const OUTPUT_HTML = 2;
+
+    /** @var int used in textAsImage(), return image resource */
+    const OUTPUT_RESOURCE = 3;
+
+    /** @var bool used in toString(), list palette */
+    const TOSTRING_PALETTE = true;
+
+    /** @var bool used in toString(), list chars */
+    const TOSTRING_CHARS = true;
 
     /** @var int way to access the module */
     public $accessMode = self::ACCESS_FILE;
@@ -77,32 +86,41 @@ class Bmf {
 
     /** @var int extra gap between letters when outputting text */
     public $letterGap = 0;
-    
+
     /**
-     * Open a font
+     * Constructor. Load a font if parameter provided.
      *
-     * @return bool succes status
+     * @param
      */
-    public function open()
+    function __construct($font = null)
     {
-        if ($this->accessMode == self::ACCESS_FILE) {
-            return $this->fileHandle = fopen($this->font, 'r');
+        if (($this->font = $font) !== null) {
+            $this->load($font);
         }
     }
 
     /**
-     * Read next $bytes bytes off a font.
+     * Clean up font data
      *
-     * @return string data
+     * @return void
      */
-    public function read($bytes)
+    public function cleanUp()
     {
-        if ($this->accessMode == self::ACCESS_FILE) {
-            return fread($this->fileHandle, $bytes);
-        } elseif ($this->accessMode == self::ACCESS_MEMORY) {
-            $result = substr($font, $this->offset, $bytes);
-            $this->offset += $bytes;
-            return $result;
+        foreach (['lineHeight', 'sizeOver', 'sizeUnder', 'addSpace', 'sizeInner', 
+            'usedColors', 'highestColor', 'colors', 'numChars'] as $i) {
+            $this->{$i} = 0;
+        }
+        $this->title = '';
+        $this->palette = [];
+        for ($i = 0; $i < 256; $i++) {
+            $this->tablo[$i] = [
+                'width' => 0,
+                'height' => 0,
+                'relx' => 0,
+                'rely' => 0,
+                'shift' => 0,
+                'data' => ''
+            ];
         }
     }
 
@@ -119,10 +137,39 @@ class Bmf {
         }
     }
 
-    function __construct($font = null)
+    /**
+     * Allocate font's palette to given image
+     *
+     * @param resource &$image
+     * @return void
+     */
+    public function imagePalette(&$image)
     {
-        if (($this->font = $font) !== null) {
-            $this->load($font);
+        foreach ($this->palette as $key => $value) {
+            $pal[$key] = imagecolorallocate($image, $value[0], $value[1], $value[2]);
+        }
+    }
+
+    /**
+     * Output string to given image.
+     *
+     * @param resource &$image
+     * @param int $x x-coordinate
+     * @param int $y y-coordinate
+     * @param string $text text to output
+     * @return int width of the text
+     */
+    public function imageString(&$image, $x, $y, $text)
+    {
+        for ($i = 0, $x0 = $x; $i < strlen($text); $i++) {
+            $letter = &$this->tablo[ord($text[$i])];
+            for ($j = 0, $rely = $letter['rely']; $j < $letter['height']; $j++) { 
+                for ($k = 0; $k < $letter['width']; $k++) {
+                    imagesetpixel($image, $x + $letter['relx'] + $k, $y + $rely + $j, 
+                        ord($letter['data'][$j * $letter['width'] + $k]));
+                }
+            }
+            $x += $letter['shift'] + $this->addSpace + $this->letterGap;
         }
     }
 
@@ -134,6 +181,7 @@ class Bmf {
      */
     public function load($font, $accessMode = self::ACCESS_FILE)
     {
+        $this->cleanUp();
         $this->font = $font;
         if (!$this->open()
             || (strlen($buffer = $this->read(17)) != 17)
@@ -185,46 +233,99 @@ class Bmf {
     }
 
     /**
+     * Open a font
+     *
+     * @return bool succes status
+     */
+    public function open()
+    {
+        if ($this->accessMode == self::ACCESS_FILE) {
+            if (!file_exists($this->font)) {
+                return false;
+            }
+            return $this->fileHandle = fopen($this->font, 'r');
+        }
+    }
+
+    /**
+     * Read next $bytes bytes off a font.
+     *
+     * @return string data
+     */
+    public function read($bytes)
+    {
+        if ($this->accessMode == self::ACCESS_FILE) {
+            return fread($this->fileHandle, $bytes);
+        } elseif ($this->accessMode == self::ACCESS_MEMORY) {
+            $result = substr($font, $this->offset, $bytes);
+            $this->offset += $bytes;
+            return $result;
+        }
+    }
+
+    /**
      * Output font's text as image
      *
      * @param string $text
-     * @param int $output 1=send header to image/gif and output the image, 0=return image resource
+     * @param int $output see self::OUTPUT_* constants
      * @return void|resource|false according to $output
      */
-    function imageText($text, $output = self::OUTPUT_PNG)
+    public function textAsImage($text, $output = self::OUTPUT_PNG)
     {
         for ($i = 0, $width = 0; $i < strlen($text) - 1; $i++) { // determine image width
-            $width += (isset($this->tablo[ord($text[$i])]['shift']) ? $this->tablo[ord($text[$i])]['shift'] : 0)
-                + $this->addSpace;
+            $width += $this->tablo[ord($text[$i])]['shift'] + $this->addSpace;
         }
         $image = imagecreate($width + ($x = max(-$this->tablo[ord($text[0])]['relx'], 0)) 
             + $this->tablo[ord($text[strlen($text) - 1])]['relx'] 
             + $this->tablo[ord($text[strlen($text) - 1])]['width']
-            + (strlen($text) - 1) * $this->letterGap, max($this->lineHeight, -$this->sizeOver + $this->sizeUnder));
+            + (strlen($text) - 1) * $this->letterGap, 
+            $height = max($this->lineHeight, -$this->sizeOver + $this->sizeUnder));
         imagealphablending($image, true);
-        imagefill($image, 0, 0, imagecolorallocatealpha($image, 0, 0, 0, 127));
-        foreach ($this->palette as $key => $value) {
-            $pal[$key] = imagecolorallocate($image, $value[0], $value[1], $value[2]);
+        imagefilledrectangle($image, 0, 0, $width - 1, $height - 1, imagecolorallocatealpha($image, 0, 0, 0, 127));
+        $this->imagePalette($image);
+        $this->imageString($image, $x, 0, $text);
+        switch ($output) {
+            case self::OUTPUT_PNG:
+                header('Content-type: image/png');
+                imagepng($image);
+                imagedestroy($image);
+                exit;
+            case self::OUTPUT_HTML:
+                ob_start();
+                imagepng($image);
+                $image_data = ob_get_contents();
+                imagedestroy($image);
+                ob_end_clean(); 
+                $result = '<img src="data:image/png;base64,' . base64_encode($image_data) . '" alt="' . htmlspecialchars($this->toString(), ENT_HTML5, 'UTF-8') . '"/>';
+                return $result;
+            case self::OUTPUT_RESOURCE:
+                return $image;
+            default:
+                imagedestroy($image);
+                return false;
         }
-        for ($i = 0; $i < strlen($text); $i++) {
-            $letter = &$this->tablo[ord($text[$i])];
-            for ($j = 0, $y = $letter['rely']; $j < $letter['height']; $j++) { 
-                for ($k = 0; $k < $letter['width']; $k++) {
-                   imagesetpixel($image, $x + $letter['relx'] + $k, $y + $j, 
-                ord($letter['data'][$j * $letter['width'] + $k]));
-                }
-            }
-            $x += $letter['shift'] + $this->addSpace + $this->letterGap;
+    }
+
+    /**
+     * Return font's parameters
+     *
+     * @return string
+     */
+    public function toString()
+    {
+        $result = '';
+        foreach (['title', 'colors', 'numChars', 'lineHeight', 'sizeOver', 'sizeUnder', 'addSpace', 'sizeInner', 
+            'usedColors', 'highestColor'] as $i) {
+            $result .= "$i: " . $this->{$i} . "\n";
         }
-        if ($output == self::OUTPUT_PNG) {
-            header('Content-type: image/png');
-            imagepng($image);
-            imagedestroy($image);
-        } elseif ($output == self::OUTPUT_RESOURCE) {
-            return $image;
-        } else {
-            imagedestroy($image);
-            return false;
+        $result .= 'palette: ';
+        for ($i = 0; $i < $this->colors; $i++) {
+            $result .= '<span style="background:#' . ($color = substr('00000' . dechex(($this->palette[$i][0] << 16) | ($this->palette[$i][1] << 8) | $this->palette[$i][2]), -6)) . '">#</span>' . $color . ' ';
         }
+        $result = substr($result, 0, -1) . "\nchars: ";
+        for ($i = 0; $i < 256; $i++) {
+            $result .= ($this->tablo[$i]['width'] ? ($i <= 32 ? "#$i " : ($i > 127 ? " $i" : chr($i))) : '');
+        }
+        return $result;
     }
 }
