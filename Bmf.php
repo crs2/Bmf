@@ -192,10 +192,10 @@ class Bmf {
             return false; // version check
         }
         $this->lineHeight = ord($buffer[5]);
-        $this->sizeOver = unpack('C', $buffer[6])[1];
-        $this->sizeUnder = unpack('C', $buffer[7])[1];
-        $this->addSpace = unpack('C', $buffer[8])[1];
-        $this->sizeInner = unpack('C', $buffer[9])[1];
+        $this->sizeOver = unpack('c', $buffer[6])[1];
+        $this->sizeUnder = unpack('c', $buffer[7])[1];
+        $this->addSpace = unpack('c', $buffer[8])[1];
+        $this->sizeInner = unpack('c', $buffer[9])[1];
         $this->usedColors = ord($buffer[10]);
         $this->highestColor = ord($buffer[11]);
         $this->reserved = unpack('L', substr($buffer, 12, 4))[1];
@@ -217,9 +217,9 @@ class Bmf {
             $this->tablo[$which = ord($buffer[0])] = [
                 'width' => $width = ord($buffer[1]),
                 'height' => $height = ord($buffer[2]),
-                'relx' => unpack('C', $buffer[3])[1],
-                'rely' => unpack('C', $buffer[4])[1],
-                'shift' => unpack('C', $buffer[5])[1],
+                'relx' => unpack('c', $buffer[3])[1],
+                'rely' => unpack('c', $buffer[4])[1],
+                'shift' => unpack('c', $buffer[5])[1],
                 'data' => ''
             ];
             if ($width && $height) {
@@ -318,13 +318,19 @@ class Bmf {
             'usedColors', 'highestColor'] as $i) {
             $result .= "$i: " . $this->{$i} . "\n";
         }
-        $result .= 'palette: ';
-        for ($i = 0; $i < $this->colors; $i++) {
-            $result .= '<span style="background:#' . ($color = substr('00000' . dechex(($this->palette[$i][0] << 16) | ($this->palette[$i][1] << 8) | $this->palette[$i][2]), -6)) . '">#</span>' . $color . ' ';
+        if (self::TOSTRING_PALETTE) {
+            $result .= 'palette:';
+            for ($i = 0; $i < $this->colors; $i++) {
+                $result .= ' <span style="background:#' . ($color = substr('00000' . dechex(($this->palette[$i][0] << 16) | ($this->palette[$i][1] << 8) | $this->palette[$i][2]), -6)) . '">#</span>' . $color;
+            }
+            $result .= "\n";
         }
-        $result = substr($result, 0, -1) . "\nchars: ";
-        for ($i = 0; $i < 256; $i++) {
-            $result .= ($this->tablo[$i]['width'] ? ($i <= 32 ? "#$i " : ($i > 127 ? " $i" : chr($i))) : '');
+        if (self::TOSTRING_CHARS) {
+            $result .= 'chars: ';
+            for ($i = 0; $i < 256; $i++) {
+                $result .= ($this->tablo[$i]['shift'] ? ($i <= 32 ? "#$i " : ($i > 127 ? " #$i" : chr($i))) : '');
+            }
+            $result .= "\n";        	
         }
         return $result;
     }
