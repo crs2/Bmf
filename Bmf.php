@@ -25,6 +25,9 @@ class Bmf {
     /** @var int used in textAsImage(), return image resource */
     const OUTPUT_RESOURCE = 3;
 
+    /** @var int used in textAsImage(), return PNG raw data, base64-encoded */
+    const OUTPUT_BASE64 = 4;
+
     /** @var bool used in toString(), include attributes */
     const TOSTRING_ATTRIBUTES = 1;
 
@@ -91,8 +94,14 @@ class Bmf {
     /** @var bool keep background transparent? */
     public $transparentBackground = true;
 
+    /** @var int cached result of $this->isMonospace() */
+    public $monospace = 0;
+
     /** @var int gap between letters when outputting text (in addition to addSpace) */
     public $letterGap = 0;
+
+    /** @var int used in textAsImage(..., OUTPUT_HTML) - additional <img> attributes */
+    public $imgAttributes = [];
 
     /**
      * Constructor. Load a font if a parameter is provided.
@@ -121,6 +130,7 @@ class Bmf {
         }
         $this->title = '';
         $this->palette = [];
+        $this->monospace = null;
         for ($i = 0; $i < 256; $i++) {
             $this->tablo[$i] = [
                 'width' => 0,
@@ -185,6 +195,29 @@ class Bmf {
             $x += $letter['shift'] + $this->addSpace + $this->letterGap;
         }
         return $x - $x0;
+    }
+
+    /**
+     * Is font monospaced (are all its characters same width)?
+     *
+     * @return int 0 for empty/unchecked, positive = uniform shift, negative = first character whose shift differs * -1
+     */
+    public function isMonospace()
+    {
+        $this->monospace = 0;
+        for ($i = 0; $i < 256; $i++) {
+            $letter = &$this->tablo[$i];
+            if ($letter['shift']) { // we examine uniformity in character's shift
+                if ($this->monospace) {
+                    if ($letter['shift'] != $this->monospace) {
+                        return ($this->monospace = -$i);
+                    }
+                } else {
+                    $this->monospace = $letter['shift'];
+                }
+            }
+        }
+        return $this->monospace;
     }
 
     /**
@@ -324,7 +357,7 @@ class Bmf {
     {
         $width; $height;
         $this->textSize($text, $width, $height);
-        $image = imagecreate($width, $height);
+        $image = $this->colors < 250 ? imagecreate($width, $height) : imagecreatetruecolor($width, $height);
         imagealphablending($image, $this->transparentBackground);
         imagefilledrectangle($image, 0, 0, $width - 1, $height - 1, 
             imagecolorallocatealpha($image, 0, 0, 0, $this->transparentBackground ? 127 : 0));
@@ -337,14 +370,22 @@ class Bmf {
                 imagepng($image);
                 imagedestroy($image);
                 exit;
+            case self::OUTPUT_BASE64:
             case self::OUTPUT_HTML:
                 ob_start();
                 imagepng($image);
-                $image_data = ob_get_contents();
+                $result = base64_encode(ob_get_contents());
                 imagedestroy($image);
-                ob_end_clean(); 
-                $result = '<img src="data:image/png;base64,' . base64_encode($image_data) . '" alt="' . htmlspecialchars($this->toString(0), ENT_HTML5, 'UTF-8') . '"/>';
-                return $result;
+                ob_end_clean();
+                if ($output == self::OUTPUT_BASE64) {
+                    return $result;
+                } else {
+                    $result = '<img src="data:image/png;base64,' . $result . '"';
+                    foreach ($this->imgAttributes as $key => $value) {
+                        $result .= " $key=\"" . htmlspecialchars($value, ENT_HTML5, 'UTF-8') . '"';
+                    }
+                    return $result . ' />';
+                }
             case self::OUTPUT_RESOURCE:
                 return $image;
             default:
